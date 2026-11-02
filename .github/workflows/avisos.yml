@@ -1,0 +1,47 @@
+name: Avisos SICOES Pro
+
+# Revisa el SICOES cada 15 minutos y avisa a cada cliente con cuenta activa por Firebase.
+# El disparo puntual cada 15 min lo hace cron-job.org con workflow_dispatch; el schedule de abajo es respaldo.
+# Al cambiar algo en servidor/ se manda un aviso de prueba a las cuentas activas.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  push:
+    branches: [main]
+    paths: ["servidor/vigilar.py", ".github/workflows/avisos.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: avisos
+  cancel-in-progress: false
+
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Traer el estado anterior (qué ya se avisó)
+        run: |
+          git fetch -q origin avisos-estado && git show origin/avisos-estado:estado.json > servidor/estado.json || echo "Sin estado previo: primera carga"
+
+      - name: Librería de Google para Firebase
+        run: pip install -q google-auth requests
+
+      - name: Revisar el SICOES
+        env:
+          FIREBASE_CUENTA: ${{ secrets.FIREBASE_CUENTA }}
+          AVISO_PRUEBA: ${{ github.event_name == 'push' && '1' || '0' }}
+        run: python3 servidor/vigilar.py
+
+      - name: Guardar el estado
+        if: always()
+        run: |
+          mkdir -p /tmp/estado && cp servidor/estado.json /tmp/estado/ && cd /tmp/estado
+          git init -q -b avisos-estado && git config user.name GamalielHu && git config user.email jhuasco8@gmail.com
+          git add -A && git commit -qm "Estado de avisos"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" avisos-estado

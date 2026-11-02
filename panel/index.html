@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Panel Alerta SICOES Pro</title>
+<style>
+  :root { --fondo:#f3f6f8; --tarjeta:#fff; --texto:#17242b; --tenue:#5d6f78; --borde:#d7e0e5; --primario:#0b4f6c; --ok:#1b7a3a; --mal:#b3261e; --aviso:#9a6700; }
+  @media (prefers-color-scheme: dark) { :root { --fondo:#0f1518; --tarjeta:#182227; --texto:#e4ecef; --tenue:#9db0b9; --borde:#2b3a41; --primario:#7cc4e4; --ok:#81c784; --mal:#f2b8b5; --aviso:#f4b740; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--fondo); color:var(--texto); }
+  header { background:#0b4f6c; color:#fff; padding:14px 16px; display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:18px; margin:0; flex:1; }
+  main { max-width:960px; margin:0 auto; padding:16px; }
+  .tarjeta { background:var(--tarjeta); border:1px solid var(--borde); border-radius:12px; padding:16px; margin-bottom:12px; }
+  label { display:block; font-size:13px; color:var(--tenue); margin:8px 0 4px; }
+  input { width:100%; padding:10px; border:1px solid var(--borde); border-radius:8px; background:var(--fondo); color:var(--texto); font:inherit; }
+  button { font:inherit; border:0; border-radius:8px; padding:9px 14px; cursor:pointer; background:var(--primario); color:#fff; }
+  button.sec { background:transparent; color:var(--primario); border:1px solid var(--borde); }
+  button.peligro { background:transparent; color:var(--mal); border:1px solid var(--borde); }
+  header button { background:transparent; border:1px solid #ffffff66; }
+  .fila { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .fila > * { flex:1 1 140px; }
+  .acciones { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .acciones button { padding:6px 10px; font-size:13px; }
+  .estado { font-size:12px; font-weight:600; padding:2px 8px; border-radius:99px; border:1px solid currentColor; }
+  .activo { color:var(--ok); } .vencido, .deshabilitado { color:var(--mal); } .pendiente { color:var(--aviso); }
+  .tenue { color:var(--tenue); font-size:13px; }
+  .error { color:var(--mal); font-size:13px; min-height:1em; }
+  .oculto { display:none !important; }
+  .buscar { margin-bottom:12px; }
+  h2 { font-size:16px; margin:0 0 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Panel Alerta SICOES Pro</h1>
+  <button id="btnSalir" class="oculto">Salir</button>
+</header>
+<main>
+  <!-- Ingreso del administrador -->
+  <section id="vEntrar" class="tarjeta oculto">
+    <h2 id="tEntrar">Ingreso del administrador</h2>
+    <p id="pPrimera" class="tenue oculto">Primera vez: crea tu cuenta de administrador. Solo se puede hacer una vez.</p>
+    <label>Correo</label><input id="aEmail" type="email" autocomplete="username">
+    <label>Contraseña</label><input id="aClave" type="password" autocomplete="current-password">
+    <p class="error" id="eEntrar"></p>
+    <button id="btnEntrar">Entrar</button>
+  </section>
+
+  <!-- Administración de cuentas -->
+  <section id="vPanel" class="oculto">
+    <div class="tarjeta">
+      <h2>Nueva cuenta de cliente</h2>
+      <div class="fila">
+        <div><label>Nombre</label><input id="nNombre"></div>
+        <div><label>Correo</label><input id="nEmail" type="email"></div>
+        <div><label>Contraseña (mín. 6)</label><input id="nClave"></div>
+      </div>
+      <div class="fila">
+        <div><label>Desde</label><input id="nInicio" type="date"></div>
+        <div><label>Hasta (incluido)</label><input id="nVence" type="date"></div>
+      </div>
+      <p class="error" id="eNueva"></p>
+      <button id="btnCrear">Crear cuenta</button>
+    </div>
+    <input id="buscar" class="buscar" placeholder="Buscar por nombre o correo">
+    <p class="tenue" id="resumen"></p>
+    <div id="lista"></div>
+  </section>
+</main>
+
+<script type="module">
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, onSnapshot, writeBatch, Timestamp, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+import { configuracion } from "./config.js";
+
+const app = initializeApp(configuracion);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const $ = (id) => document.getElementById(id);
+const ver = (id, si) => $(id).classList.toggle("oculto", !si);
+let primeraVez = false, cuentas = [], quitarOyente = null;
+
+// Fechas: se eligen días en hora de Bolivia; "hasta" incluye todo ese día
+const aFecha = (texto, finDelDia) => Timestamp.fromDate(new Date(texto + (finDelDia ? "T23:59:59-04:00" : "T00:00:00-04:00")));
+const aTexto = (ts) => ts ? new Date(ts.toMillis() - 4 * 3600e3).toISOString().slice(0, 10) : "";
+const mostrar = (ts) => ts ? aTexto(ts).split("-").reverse().join("/") : "—";
+const hoy = () => new Date(Date.now() - 4 * 3600e3).toISOString().slice(0, 10);
+const sumarDias = (texto, d) => new Date(new Date(texto + "T12:00:00Z").getTime() + d * 864e5).toISOString().slice(0, 10);
+$("nInicio").value = hoy();
+$("nVence").value = sumarDias(hoy(), 30);
+
+function mensajeError(e) {
+  const c = e && e.code || "";
+  if (c.includes("invalid-credential") || c.includes("wrong-password") || c.includes("user-not-found")) return "Correo o contraseña incorrectos.";
+  if (c.includes("email-already-in-use")) return "Ese correo ya tiene una cuenta.";
+  if (c.includes("weak-password")) return "La contraseña debe tener al menos 6 caracteres.";
+  if (c.includes("invalid-email")) return "El correo no es válido.";
+  if (c.includes("permission-denied")) return "No tienes permiso de administrador.";
+  if (c.includes("too-many-requests")) return "Demasiados intentos. Espera unos minutos.";
+  return (e && e.message) || String(e);
+}
+
+onAuthStateChanged(auth, async (u) => {
+  if (quitarOyente) { quitarOyente(); quitarOyente = null; }
+  ver("btnSalir", !!u);
+  if (!u) {
+    primeraVez = !(await getDoc(doc(db, "config", "inicio")).catch(() => null))?.exists();
+    $("tEntrar").textContent = primeraVez ? "Crear administrador" : "Ingreso del administrador";
+    $("btnEntrar").textContent = primeraVez ? "Crear administrador" : "Entrar";
+    ver("pPrimera", primeraVez); ver("vEntrar", true); ver("vPanel", false);
+    return;
+  }
+  const admin = await getDoc(doc(db, "admins", u.uid)).catch(() => null);
+  if (!admin || !admin.exists()) {
+    $("eEntrar").textContent = "Esta cuenta no es de administrador.";
+    await signOut(auth);
+    return;
+  }
+  ver("vEntrar", false); ver("vPanel", true);
+  quitarOyente = onSnapshot(collection(db, "usuarios"), (s) => {
+    cuentas = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    pintar();
+  }, (e) => { $("resumen").textContent = mensajeError(e); });
+});
+
+$("btnEntrar").onclick = async () => {
+  $("eEntrar").textContent = "";
+  const email = $("aEmail").value.trim(), clave = $("aClave").value;
+  try {
+    if (primeraVez) {
+      const c = await createUserWithEmailAndPassword(auth, email, clave);
+      const lote = writeBatch(db);
+      lote.set(doc(db, "admins", c.user.uid), { email, creado: serverTimestamp() });
+      lote.set(doc(db, "config", "inicio"), { creado: serverTimestamp() });
+      await lote.commit();
+      location.reload();
+    } else {
+      await signInWithEmailAndPassword(auth, email, clave);
+    }
+  } catch (e) { $("eEntrar").textContent = mensajeError(e); }
+};
+$("btnSalir").onclick = () => signOut(auth);
+
+// Crear la cuenta con una segunda instancia: así el administrador no pierde su sesión
+$("btnCrear").onclick = async () => {
+  $("eNueva").textContent = "";
+  const nombre = $("nNombre").value.trim(), email = $("nEmail").value.trim(), clave = $("nClave").value;
+  const inicio = $("nInicio").value, vence = $("nVence").value;
+  if (!email || !clave || !inicio || !vence) { $("eNueva").textContent = "Completa correo, contraseña y fechas."; return; }
+  if (vence < inicio) { $("eNueva").textContent = "La fecha final es anterior a la inicial."; return; }
+  $("btnCrear").disabled = true;
+  const aux = initializeApp(configuracion, "alta-" + Date.now());
+  try {
+    const c = await createUserWithEmailAndPassword(getAuth(aux), email, clave);
+    await setDoc(doc(db, "usuarios", c.user.uid), {
+      nombre, email, activo: true, inicio: aFecha(inicio, false), vence: aFecha(vence, true),
+      dispositivo: "", entidades: [], creado: serverTimestamp(),
+    });
+    for (const id of ["nNombre", "nEmail", "nClave"]) $(id).value = "";
+    $("eNueva").textContent = "";
+    alert(`Cuenta creada.\nCorreo: ${email}\nContraseña: ${clave}\nEnvíale estos datos al cliente.`);
+  } catch (e) { $("eNueva").textContent = mensajeError(e); }
+  finally { await deleteApp(aux).catch(() => {}); $("btnCrear").disabled = false; }
+};
+
+function estadoDe(c) {
+  const ahora = Date.now();
+  if (!c.activo) return ["deshabilitado", "Deshabilitada"];
+  if (c.inicio && ahora < c.inicio.toMillis()) return ["pendiente", "Aún no empieza"];
+  if (!c.vence || ahora >= c.vence.toMillis()) return ["vencido", "Vencida"];
+  const dias = Math.ceil((c.vence.toMillis() - ahora) / 864e5);
+  return dias <= 3 ? ["pendiente", `Vence en ${dias} día(s)`] : ["activo", "Activa"];
+}
+
+function pintar() {
+  const q = $("buscar").value.trim().toLowerCase();
+  const lista = cuentas
+    .filter((c) => !q || (c.nombre || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q))
+    .sort((a, b) => (a.vence?.toMillis() || 0) - (b.vence?.toMillis() || 0));
+  const activas = cuentas.filter((c) => estadoDe(c)[0] !== "deshabilitado" && estadoDe(c)[0] !== "vencido").length;
+  $("resumen").textContent = `${cuentas.length} cuenta(s), ${activas} vigente(s).`;
+  $("lista").replaceChildren(...lista.map(tarjeta));
+}
+$("buscar").oninput = pintar;
+
+function tarjeta(c) {
+  const [clase, texto] = estadoDe(c);
+  const t = document.createElement("div");
+  t.className = "tarjeta";
+  t.innerHTML = `
+    <div class="fila" style="align-items:flex-start">
+      <div style="flex:3 1 200px"><strong></strong><div class="tenue correo"></div></div>
+      <div style="flex:0 0 auto"><span class="estado ${clase}">${texto}</span></div>
+    </div>
+    <p class="tenue">Desde ${mostrar(c.inicio)} hasta ${mostrar(c.vence)} · ${(c.entidades || []).length} entidad(es) ·
+      ${c.dispositivo ? "ligada a un celular" : "sin celular todavía"}${c.fcmToken ? "" : " · sin avisos aún"}</p>
+    <div class="fila fechas oculto">
+      <div><label>Desde</label><input type="date" class="fi" value="${aTexto(c.inicio)}"></div>
+      <div><label>Hasta (incluido)</label><input type="date" class="fv" value="${aTexto(c.vence)}"></div>
+    </div>
+    <div class="acciones"></div>`;
+  t.querySelector("strong").textContent = c.nombre || c.email;
+  t.querySelector(".correo").textContent = c.email || "";
+  const ref = doc(db, "usuarios", c.id);
+  const boton = (txt, clase, fn) => { const b = document.createElement("button"); b.textContent = txt; b.className = clase; b.onclick = async () => {
+    b.disabled = true; try { await fn(); } catch (e) { alert(mensajeError(e)); } finally { b.disabled = false; } }; t.querySelector(".acciones").append(b); };
+  boton(c.activo ? "Deshabilitar" : "Habilitar", c.activo ? "peligro" : "", () => updateDoc(ref, { activo: !c.activo }));
+  const base = c.vence && c.vence.toMillis() > Date.now() ? aTexto(c.vence) : hoy();
+  boton("+30 días", "sec", () => updateDoc(ref, { vence: aFecha(sumarDias(base, 30), true), activo: true }));
+  boton("Cambiar fechas", "sec", async () => {
+    const f = t.querySelector(".fechas");
+    if (f.classList.contains("oculto")) { f.classList.remove("oculto"); return; }
+    const fi = t.querySelector(".fi").value, fv = t.querySelector(".fv").value;
+    if (!fi || !fv || fv < fi) { alert("Revisa las fechas."); return; }
+    await updateDoc(ref, { inicio: aFecha(fi, false), vence: aFecha(fv, true) });
+  });
+  if (c.dispositivo) boton("Liberar celular", "sec", async () => {
+    if (confirm("¿Liberar la cuenta para que pueda entrar desde otro celular?")) await updateDoc(ref, { dispositivo: "", fcmToken: "" });
+  });
+  return t;
+}
+</script>
+</body>
+</html>

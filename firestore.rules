@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function sesion() { return request.auth != null; }
+    function esAdmin() { return sesion() && exists(/databases/$(db)/documents/admins/$(request.auth.uid)); }
+    function cambia() { return request.resource.data.diff(resource.data).affectedKeys(); }
+
+    // Cuentas de los clientes: el administrador las maneja; el cliente solo ve la suya y
+    // solo puede cambiar sus entidades, el token de avisos y ligar su celular la primera vez.
+    match /usuarios/{uid} {
+      allow read: if esAdmin() || (sesion() && request.auth.uid == uid);
+      allow create, delete: if esAdmin();
+      allow update: if esAdmin() || (
+        sesion() && request.auth.uid == uid
+        && cambia().hasOnly(['dispositivo', 'entidades', 'fcmToken', 'tokenActualizado'])
+        && (!cambia().hasAny(['dispositivo']) || resource.data.get('dispositivo', '') == '')
+      );
+    }
+
+    // Administradores: el primero se crea una sola vez desde el panel (junto con config/inicio)
+    match /admins/{uid} {
+      allow read: if sesion() && request.auth.uid == uid;
+      allow create: if sesion() && request.auth.uid == uid
+        && !exists(/databases/$(db)/documents/config/inicio)
+        && existsAfter(/databases/$(db)/documents/config/inicio);
+    }
+    match /config/inicio {
+      allow read: if true;
+      allow create: if sesion()
+        && !exists(/databases/$(db)/documents/config/inicio)
+        && existsAfter(/databases/$(db)/documents/admins/$(request.auth.uid));
+    }
+  }
+}

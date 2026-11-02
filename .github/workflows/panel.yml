@@ -1,0 +1,49 @@
+name: Panel y configuración de Firebase
+
+# Prepara Firebase (base de datos, ingreso con correo, reglas, apps) y publica el panel web en GitHub Pages.
+on:
+  push:
+    branches: [main]
+    paths: ["panel/**", "firestore.rules", "servidor/configurar.py", ".github/workflows/panel.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: panel
+  cancel-in-progress: true
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.pagina.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Librería de Google
+        run: pip install -q google-auth requests
+
+      - name: Configurar Firebase
+        env:
+          FIREBASE_CUENTA: ${{ secrets.FIREBASE_CUENTA }}
+        run: python3 servidor/configurar.py
+
+      - name: Guardar el informe (sin claves)
+        if: always()
+        run: |
+          mkdir -p /tmp/inf && cp informe.txt /tmp/inf/ 2>/dev/null || echo "sin informe" > /tmp/inf/informe.txt
+          cd /tmp/inf && git init -q -b configuracion && git config user.name GamalielHu && git config user.email jhuasco8@gmail.com
+          git add -A && git commit -qm "Informe de configuración"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" configuracion
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: panel
+      - id: pagina
+        uses: actions/deploy-pages@v4
