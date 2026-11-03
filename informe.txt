@@ -1,0 +1,7 @@
+proyecto: alerta-sicoes-pro
+ERROR Base de datos Firestore: HTTP 403: Cloud Firestore API has not been used in project alerta-sicoes-pro before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/firestore.googleapis.com/overview?project=alerta-sicoes-pro then retry. If you enabled this API recently, wait a few minutes for the actio
+ERROR Ingreso con correo: HTTP 404: CONFIGURATION_NOT_FOUND
+ERROR Dominio del panel: HTTP 404: CONFIGURATION_NOT_FOUND
+ERROR Reglas de seguridad: HTTP 403: The caller does not have permission
+OK    App Android bo.alertasicoes.pro: registrada
+OK    App web del panel: config.js listo
